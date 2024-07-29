@@ -56,12 +56,12 @@ def main():
             pd_rating = st.slider('PD Rating', 5, 11, 7)
             lgd = st.selectbox('LGD', label_encoders['LGD'].classes_)
             eligibility = st.selectbox('Eligibility', label_encoders['Eligibility'].classes_)
-            association_spread = st.slider('Association Spread', 0.0050, 0.04, 0.015)
+            association_spread = st.number_input('Association Spread (%)', min_value=0.0050, max_value=0.04, value=0.015, step=0.0001)
             purchased_from = st.selectbox('Purchased From', label_encoders['Purchased From'].classes_)
             industry = st.selectbox('Industry', label_encoders['Industry'].classes_)
             tenor = st.slider('Tenor', 3, 10, 5)
             construction = st.selectbox('Construction', label_encoders['Construction'].classes_)
-            upfront_fee = st.slider('Upfront Fee', 0.0015, 0.0040, 0.0025)
+            upfront_fee = st.number_input('Upfront Fee (%)', min_value=0.0015, max_value=0.0040, value=0.0025, step=0.0001)
 
             # Encode input data
             input_data = pd.DataFrame({
