@@ -37,6 +37,8 @@ def main():
                     st.success('Model trained successfully and saved!')
                 except KeyError as e:
                     st.error(f"Column not found: {e}")
+                except Exception as e:
+                    st.error(f"An error occurred: {e}")
 
     # Predict Tab
     with tab2:
@@ -93,16 +95,21 @@ def train_model(data):
     if missing_columns:
         raise KeyError(f"Missing columns: {missing_columns}")
 
+    # Handle missing values
+    data = data.fillna('')
+
     # Encode categorical variables
     label_encoders = {}
     for column in ['Loan Type', 'LGD', 'Eligibility', 'Purchased From', 'Industry', 'Construction']:
         le = LabelEncoder()
-        data[column] = le.fit_transform(data[column])
+        data[column] = le.fit_transform(data[column].astype(str))
         label_encoders[column] = le
 
-    # Convert percentage strings to float
-    data['Association Spread'] = data['Association Spread'].str.rstrip('%').astype('float') / 100.0
-    data['Upfront Fee'] = data['Upfront Fee'].str.rstrip('%').astype('float') / 100.0
+    # Convert percentage strings to float if necessary
+    if data['Association Spread'].dtype == 'object':
+        data['Association Spread'] = data['Association Spread'].str.rstrip('%').astype('float') / 100.0
+    if data['Upfront Fee'].dtype == 'object':
+        data['Upfront Fee'] = data['Upfront Fee'].str.rstrip('%').astype('float') / 100.0
 
     # Separate features and target
     X = data.drop('Pursue', axis=1)
