@@ -29,9 +29,14 @@ def main():
             st.write("Data Preview:")
             st.write(data.head())
             
+            st.write("Columns in uploaded file:", data.columns.tolist())
+
             if st.button('Train Model'):
-                model, label_encoders = train_model(data)
-                st.success('Model trained successfully and saved!')
+                try:
+                    model, label_encoders = train_model(data)
+                    st.success('Model trained successfully and saved!')
+                except KeyError as e:
+                    st.error(f"Column not found: {e}")
 
     # Predict Tab
     with tab2:
@@ -81,6 +86,13 @@ def main():
             st.warning('Please train the model first.')
 
 def train_model(data):
+    required_columns = ['Loan Type', 'LGD', 'Eligibility', 'Purchased From', 'Industry', 'Construction', 'Association Spread', 'Upfront Fee', 'PD Rating', 'Pursue', 'Tenor']
+    
+    # Check for missing columns
+    missing_columns = [col for col in required_columns if col not in data.columns]
+    if missing_columns:
+        raise KeyError(f"Missing columns: {missing_columns}")
+
     # Encode categorical variables
     label_encoders = {}
     for column in ['Loan Type', 'LGD', 'Eligibility', 'Purchased From', 'Industry', 'Construction']:
