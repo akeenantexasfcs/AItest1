@@ -9,7 +9,11 @@ import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
+from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+from sklearn.naive_bayes import GaussianNB
+from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 import joblib
 
@@ -33,8 +37,8 @@ def main():
 
             if st.button('Train Model'):
                 try:
-                    model, label_encoders = train_model(data)
-                    st.success('Model trained successfully and saved!')
+                    models, label_encoders = train_model(data)
+                    st.success('Models trained successfully and saved!')
                 except KeyError as e:
                     st.error(f"Column not found: {e}")
                 except Exception as e:
@@ -43,10 +47,10 @@ def main():
     # Predict Tab
     with tab2:
         st.header("Predict")
-        # Load the model and encoders
-        model, label_encoders = load_model()
+        # Load the models and encoders
+        models, label_encoders = load_model()
         
-        if model is not None:
+        if models is not None:
             # Input fields for new data
             loan_type = st.selectbox('Loan Type', label_encoders['Loan Type'].classes_)
             pd_rating = st.slider('PD Rating', 5, 11, 7)
@@ -79,11 +83,20 @@ def main():
                 elif column in ['Association Spread', 'Upfront Fee']:
                     input_data[column] = input_data[column].astype('float')
 
-            # Predict the outcome
+            # Predict the outcome using multiple models
             if st.button('Predict'):
-                prediction = model.predict(input_data)
-                prediction_text = 'Yes' if prediction[0] == 1 else 'No'
-                st.write(f'The prediction is: {prediction_text}')
+                predictions, probabilities = predict(input_data, models)
+                majority_vote = 'Yes' if predictions.count('Yes') > predictions.count('No') else 'No'
+
+                # Display the results
+                result_df = pd.DataFrame({
+                    'Model Type': ['Logistic Regression', 'Random Forest', 'Support Vector Machine', 'Naive Bayes', 'K-Nearest Neighbors'],
+                    'Prediction': predictions,
+                    'Probability': probabilities
+                })
+
+                st.write(result_df)
+                st.write(f'ELC Prediction: {majority_vote}')
         else:
             st.warning('Please train the model first.')
 
@@ -118,23 +131,48 @@ def train_model(data):
     # Split data into training and testing sets
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    # Train a random forest classifier
-    model = RandomForestClassifier(random_state=42)
-    model.fit(X_train, y_train)
+    # Train multiple models
+    models = {
+        'Logistic Regression': LogisticRegression(random_state=42),
+        'Random Forest': RandomForestClassifier(random_state=42),
+        'Support Vector Machine': SVC(probability=True, random_state=42),
+        'Naive Bayes': GaussianNB(),
+        'K-Nearest Neighbors': KNeighborsClassifier()
+    }
 
-    # Save the model and encoders
-    joblib.dump(model, 'model.pkl')
+    for model in models.values():
+        model.fit(X_train, y_train)
+
+    # Save the models and encoders
+    joblib.dump(models, 'models.pkl')
     joblib.dump(label_encoders, 'label_encoders.pkl')
 
-    return model, label_encoders
+    return models, label_encoders
 
 def load_model():
     try:
-        model = joblib.load('model.pkl')
+        models = joblib.load('models.pkl')
         label_encoders = joblib.load('label_encoders.pkl')
-        return model, label_encoders
+        return models, label_encoders
     except:
         return None, None
+
+def predict(input_data, models):
+    predictions = []
+    probabilities = []
+
+    for model_name, model in models.items():
+        prediction = model.predict(input_data)[0]
+        if hasattr(model, 'predict_proba'):
+            probability = model.predict_proba(input_data)[0][1]  # Probability of 'Yes'
+            probabilities.append(probability)
+        else:
+            probabilities.append('N/A')
+
+        prediction_text = 'Yes' if prediction == 1 else 'No'
+        predictions.append(prediction_text)
+
+    return predictions, probabilities
 
 if __name__ == '__main__':
     main()
