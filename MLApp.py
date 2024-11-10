@@ -1,187 +1,138 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[ ]:
 
 
 import streamlit as st
+import json
+import uuid
 import pandas as pd
-import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.svm import SVC
-from sklearn.naive_bayes import GaussianNB
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-import joblib
+from typing import Dict, List, Union
+import io
 
-# Define the Streamlit app
-def main():
-    st.title('Loan Pursue Prediction App')
-
-    # Tabs for training and prediction
-    tab1, tab2 = st.tabs(["Train Model", "Predict"])
-
-    # Train Model Tab
-    with tab1:
-        st.header("Train Model")
-        uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
-        if uploaded_file is not None:
-            data = pd.read_excel(uploaded_file)
-            st.write("Data Preview:")
-            st.write(data.head())
-            
-            st.write("Columns in uploaded file:", data.columns.tolist())
-
-            if st.button('Train Model'):
-                try:
-                    models, label_encoders = train_model(data)
-                    st.success('Models trained successfully and saved!')
-                except KeyError as e:
-                    st.error(f"Column not found: {e}")
-                except Exception as e:
-                    st.error(f"An error occurred: {e}")
-
-    # Predict Tab
-    with tab2:
-        st.header("Predict")
-        # Load the models and encoders
-        models, label_encoders = load_model()
-        
-        if models is not None:
-            # Input fields for new data
-            loan_type = st.selectbox('Loan Type', label_encoders['Loan Type'].classes_)
-            pd_rating = st.slider('PD Rating', 5, 11, 7)
-            lgd = st.selectbox('LGD', label_encoders['LGD'].classes_)
-            eligibility = st.selectbox('Eligibility', label_encoders['Eligibility'].classes_)
-            association_spread = st.text_input('Association Spread (%)', value="1.25")
-            purchased_from = st.selectbox('Purchased From', label_encoders['Purchased From'].classes_)
-            industry = st.selectbox('Industry', label_encoders['Industry'].classes_)
-            tenor = st.slider('Tenor', 3, 10, 5)
-            construction = st.selectbox('Construction', label_encoders['Construction'].classes_)
-            upfront_fee = st.text_input('Upfront Fee (%)', value="0.25")
-
-            # Process input data
-            try:
-                association_spread = float(association_spread.rstrip('%')) / 100
-                upfront_fee = float(upfront_fee.rstrip('%')) / 100
-            except ValueError:
-                st.error("Please enter valid percentages for Association Spread and Upfront Fee.")
-                return
-
-            # Encode input data
-            input_data = pd.DataFrame({
-                'Loan Type': [loan_type],
-                'PD Rating': [pd_rating],
-                'LGD': [lgd],
-                'Eligibility': [eligibility],
-                'Association Spread': [association_spread],
-                'Purchased From': [purchased_from],
-                'Industry': [industry],
-                'Tenor': [tenor],
-                'Construction': [construction],
-                'Upfront Fee': [upfront_fee]
-            })
-
-            for column in input_data.columns:
-                if column in label_encoders:
-                    input_data[column] = label_encoders[column].transform(input_data[column])
-                elif column in ['Association Spread', 'Upfront Fee']:
-                    input_data[column] = input_data[column].astype('float')
-
-            # Predict the outcome using multiple models
-            if st.button('Predict'):
-                predictions, probabilities = predict(input_data, models)
-                majority_vote = 'Yes' if predictions.count('Yes') > predictions.count('No') else 'No'
-
-                # Display the results
-                result_df = pd.DataFrame({
-                    'Model Type': ['Logistic Regression', 'Random Forest', 'Support Vector Machine', 'Naive Bayes', 'K-Nearest Neighbors'],
-                    'Prediction': predictions,
-                    'Probability': probabilities
-                })
-
-                st.write(result_df)
-                st.write(f'ELC Prediction: {majority_vote}')
-        else:
-            st.warning('Please train the model first.')
-
-def train_model(data):
-    required_columns = ['Loan Type', 'LGD', 'Eligibility', 'Purchased From', 'Industry', 'Construction', 'Association Spread', 'Upfront Fee', 'PD Rating', 'Pursue', 'Tenor']
+def process_textract_json(textract_data: Dict) -> List[Dict]:
+    """Process Textract JSON into flattened format for OpenSearch"""
+    if isinstance(textract_data, str):
+        textract_data = json.loads(textract_data)
     
-    # Check for missing columns
-    missing_columns = [col for col in required_columns if col not in data.columns]
-    if missing_columns:
-        raise KeyError(f"Missing columns: {missing_columns}")
+    documents = []
+    doc_id = f"textract_doc_{uuid.uuid4().hex[:8]}"
+    
+    # Process each block from Textract
+    for block in textract_data.get("Blocks", []):
+        if block.get("BlockType") in ["LINE", "WORD"] and block.get("Text"):
+            doc = {
+                "DocumentId": doc_id,
+                "BlockType": block.get("BlockType", "LINE"),
+                "Id": block.get("Id", ""),
+                "Text": block.get("Text", ""),
+                "Confidence": block.get("Confidence", 99.0),
+                "Page": block.get("Page", 1)
+            }
+            documents.append(doc)
+    
+    return documents
 
-    # Handle missing values
-    data = data.fillna('')
+def create_bulk_index_entries(documents: List[Dict], index_name: str) -> str:
+    """Create bulk index entries for OpenSearch"""
+    bulk_entries = []
+    
+    for doc in documents:
+        # Create index action
+        action = {
+            "index": {
+                "_index": index_name
+            }
+        }
+        
+        # Add both action and document
+        bulk_entries.append(json.dumps(action))
+        bulk_entries.append(json.dumps(doc))
+    
+    return "\n".join(bulk_entries)
 
-    # Encode categorical variables
-    label_encoders = {}
-    for column in ['Loan Type', 'LGD', 'Eligibility', 'Purchased From', 'Industry', 'Construction']:
-        le = LabelEncoder()
-        data[column] = le.fit_transform(data[column].astype(str))
-        label_encoders[column] = le
+st.title("Textract JSON to OpenSearch Bulk Index Converter")
 
-    # Convert percentage strings to float if necessary
-    if data['Association Spread'].dtype == 'object':
-        data['Association Spread'] = data['Association Spread'].str.rstrip('%').astype('float') / 100.0
-    if data['Upfront Fee'].dtype == 'object':
-        data['Upfront Fee'] = data['Upfront Fee'].str.rstrip('%').astype('float') / 100.0
+# File upload or JSON input
+input_type = st.radio("Choose input type:", ["File Upload", "Paste JSON"])
 
-    # Separate features and target
-    X = data.drop('Pursue', axis=1)
-    y = data['Pursue'].apply(lambda x: 1 if x == 'Yes' else 0)
+textract_data = None
 
-    # Split data into training and testing sets
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+if input_type == "File Upload":
+    uploaded_file = st.file_uploader("Upload Textract JSON file", type=['json'])
+    if uploaded_file:
+        try:
+            textract_data = json.load(uploaded_file)
+        except Exception as e:
+            st.error(f"Error reading JSON file: {str(e)}")
+else:
+    json_input = st.text_area("Paste Textract JSON here:", height=300)
+    if json_input:
+        try:
+            textract_data = json.loads(json_input)
+        except Exception as e:
+            st.error(f"Error parsing JSON: {str(e)}")
 
-    # Train multiple models
-    models = {
-        'Logistic Regression': LogisticRegression(random_state=42),
-        'Random Forest': RandomForestClassifier(random_state=42),
-        'Support Vector Machine': SVC(probability=True, random_state=42),
-        'Naive Bayes': GaussianNB(),
-        'K-Nearest Neighbors': KNeighborsClassifier()
-    }
+# Index name input
+index_name = st.text_input("Enter Index Name:", value="textract-documents")
 
-    for model in models.values():
-        model.fit(X_train, y_train)
+if st.button("Convert to Bulk Index Format"):
+    if textract_data:
+        try:
+            # Process Textract JSON
+            documents = process_textract_json(textract_data)
+            
+            # Create bulk index entries
+            bulk_index_content = create_bulk_index_entries(documents, index_name)
+            
+            # Display stats
+            st.info(f"Processed {len(documents)} text blocks from Textract")
+            
+            # Display the output
+            st.text_area("Bulk Index Format (Copy this to OpenSearch):", 
+                        bulk_index_content, 
+                        height=300)
+            
+            # Download button
+            st.download_button(
+                label="Download Bulk Index File",
+                data=bulk_index_content,
+                file_name=f"textract_bulk_index.json",
+                mime="application/json"
+            )
+            
+            # Preview of processed data
+            if st.checkbox("Show preview of processed data"):
+                df = pd.DataFrame(documents)
+                st.dataframe(df)
+                
+        except Exception as e:
+            st.error(f"Error processing data: {str(e)}")
+    else:
+        st.warning("Please provide Textract JSON data")
 
-    # Save the models and encoders
-    joblib.dump(models, 'models.pkl')
-    joblib.dump(label_encoders, 'label_encoders.pkl')
+st.markdown("""
+### How to use:
+1. Choose input method (file upload or paste JSON)
+2. Provide your Textract JSON output
+3. (Optional) Customize the Index Name
+4. Click 'Convert to Bulk Index Format'
+5. Review the preview (optional)
+6. Copy the output or download the file
+7. Paste the content into OpenSearch Dev Tools console
+""")
 
-    return models, label_encoders
+# Add AWS Textract direct integration info
+st.sidebar.markdown("""
+### About
+This tool converts AWS Textract JSON output into OpenSearch bulk index format.
 
-def load_model():
-    try:
-        models = joblib.load('models.pkl')
-        label_encoders = joblib.load('label_encoders.pkl')
-        return models, label_encoders
-    except:
-        return None, None
-
-def predict(input_data, models):
-    predictions = []
-    probabilities = []
-
-    for model_name, model in models.items():
-        prediction = model.predict(input_data)[0]
-        if hasattr(model, 'predict_proba'):
-            probability = model.predict_proba(input_data)[0][1]  # Probability of 'Yes'
-            probabilities.append(probability)
-        else:
-            probabilities.append('N/A')
-
-        prediction_text = 'Yes' if prediction == 1 else 'No'
-        predictions.append(prediction_text)
-
-    return predictions, probabilities
-
-if __name__ == '__main__':
-    main()
+### Supported Features:
+- Direct JSON file upload
+- JSON text input
+- Custom index naming
+- Data preview
+- Bulk index format download
+""")
 
